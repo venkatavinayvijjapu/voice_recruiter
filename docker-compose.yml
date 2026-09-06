@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: hiring
-      POSTGRES_USER: hiring
-      POSTGRES_PASSWORD: hiring
+      POSTGRES_DB: ${POSTGRES_DB:-hiring}
+      POSTGRES_USER: ${POSTGRES_USER:-hiring}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hiring}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hiring -d hiring"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hiring} -d ${POSTGRES_DB:-hiring}"]
       interval: 5s
       timeout: 5s
       retries: 10
