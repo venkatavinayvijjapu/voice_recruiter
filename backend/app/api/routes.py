@@ -3,11 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from .db import get_db
-from .models import Job, Candidate, Screening
-from .services.astra import parse_jd, generate_questions
-from .services.hunar import HunarClient
-from .worker import poll_screening
+from ..db import get_db
+from ..models import Job, Candidate, Screening
+from ..services.astra import parse_jd, generate_questions
+from ..services.hunar import HunarClient
+from ..worker import poll_screening
 
 router = APIRouter(prefix="/api")
 
