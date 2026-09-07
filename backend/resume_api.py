@@ -1,13 +1,15 @@
 import io
+import json
 import zipfile
 from datetime import datetime, timezone
 from typing import List
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, String, Text, LargeBinary, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Text, LargeBinary, DateTime, JSON
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 import PyPDF2
+from openai import OpenAI
 
 from app.config import settings
 
@@ -26,6 +28,7 @@ class UploadedResume(ResumeBase):
     content_type = Column(String(100))
     file_data = Column(LargeBinary)
     extracted_text = Column(Text, nullable=True)
+    parsed_data = Column(JSON, nullable=True)
     uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 # Create the tables for this standalone API
@@ -37,6 +40,52 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# -------------------------------------------------------------------
+# AI Configuration
+# -------------------------------------------------------------------
+openai_client = OpenAI(base_url=settings.explabs_base_url, api_key=settings.explabs_api_key)
+
+def extract_resume_details(text: str) -> dict:
+    if not text or not text.strip():
+        return {}
+    
+    prompt = f"""You are an expert recruiter AI. Extract the following details from the resume text below:
+- Name
+- Email
+- Phone
+- Skills (as a list of strings)
+- Experience Years (as a number)
+
+Return ONLY a valid JSON object matching this schema:
+{{
+  "name": "string or null",
+  "email": "string or null",
+  "phone": "string or null",
+  "skills": ["string", "string"],
+  "experience_years": 0.0
+}}
+
+RESUME TEXT:
+{text[:4000]}"""
+    try:
+        r = openai_client.chat.completions.create(
+            model=settings.explabs_model,
+            messages=[{"role":"user","content":prompt}],
+        )
+        content = r.choices[0].message.content or "{}"
+        
+        # Clean markdown formatting if present
+        content = content.strip()
+        if content.startswith("```json"):
+            content = content[7:]
+        if content.endswith("```"):
+            content = content[:-3]
+            
+        return json.loads(content)
+    except Exception as e:
+        print(f"Failed to extract AI details: {e}")
+        return {}
 
 # -------------------------------------------------------------------
 # FastAPI App
@@ -66,16 +115,20 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
 def process_file(filename: str, content: bytes, content_type: str, db: Session):
     extracted_text = None
+    parsed_data = None
     
     # Simple text extraction for PDFs
     if filename.lower().endswith('.pdf'):
         extracted_text = extract_text_from_pdf(content)
+        if extracted_text:
+            parsed_data = extract_resume_details(extracted_text)
         
     resume = UploadedResume(
         filename=filename,
         content_type=content_type,
         file_data=content,
-        extracted_text=extracted_text
+        extracted_text=extracted_text,
+        parsed_data=parsed_data
     )
     db.add(resume)
     return resume
@@ -134,7 +187,8 @@ def list_resumes(db: Session = Depends(get_db)):
         UploadedResume.id, 
         UploadedResume.filename, 
         UploadedResume.content_type, 
-        UploadedResume.uploaded_at
+        UploadedResume.uploaded_at,
+        UploadedResume.parsed_data
     ).order_by(UploadedResume.uploaded_at.desc()).all()
     
     return [
@@ -142,7 +196,8 @@ def list_resumes(db: Session = Depends(get_db)):
             "id": r.id, 
             "filename": r.filename, 
             "content_type": r.content_type, 
-            "uploaded_at": r.uploaded_at
+            "uploaded_at": r.uploaded_at,
+            "parsed_data": r.parsed_data
         } for r in resumes
     ]
 
