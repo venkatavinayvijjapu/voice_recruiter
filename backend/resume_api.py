@@ -13,6 +13,9 @@ from openai import OpenAI
 
 from app.config import settings
 
+# Import the Candidate model from the main app
+from app.models.entities import Candidate
+
 # -------------------------------------------------------------------
 # Database Setup (Isolated from the main app)
 # -------------------------------------------------------------------
@@ -54,16 +57,22 @@ def extract_resume_details(text: str) -> dict:
 - Name
 - Email
 - Phone
-- Skills (as a list of strings)
+- Location
 - Experience Years (as a number)
+- Current Company
+- Current Title
+- Skills (as a list of strings)
 
 Return ONLY a valid JSON object matching this schema:
 {{
   "name": "string or null",
   "email": "string or null",
   "phone": "string or null",
-  "skills": ["string", "string"],
-  "experience_years": 0.0
+  "location": "string or null",
+  "experience_years": 0.0,
+  "current_company": "string or null",
+  "current_title": "string or null",
+  "skills": ["string", "string"]
 }}
 
 RESUME TEXT:
@@ -122,6 +131,21 @@ def process_file(filename: str, content: bytes, content_type: str, db: Session):
         extracted_text = extract_text_from_pdf(content)
         if extracted_text:
             parsed_data = extract_resume_details(extracted_text)
+            
+            # Save the candidate details directly to the main Candidate table
+            if parsed_data and parsed_data.get("name"):
+                skills_list = parsed_data.get("skills") or []
+                new_candidate = Candidate(
+                    name=parsed_data.get("name") or "Unknown Candidate",
+                    email=parsed_data.get("email"),
+                    phone=parsed_data.get("phone") or "N/A",  # Phone is required by DB schema
+                    location=parsed_data.get("location"),
+                    experience_years=float(parsed_data.get("experience_years") or 0.0),
+                    current_company=parsed_data.get("current_company"),
+                    current_title=parsed_data.get("current_title"),
+                    skills=", ".join(skills_list)
+                )
+                db.add(new_candidate)
         
     resume = UploadedResume(
         filename=filename,
