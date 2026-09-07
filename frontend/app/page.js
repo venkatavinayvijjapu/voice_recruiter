@@ -1,9 +1,15 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Auth from './components/Auth';
+import SessionsModal from './components/SessionsModal';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function Home() {
+  const [token, setToken] = useState(null);
+  const [user, setUser] = useState(null);
+  const [showSessions, setShowSessions] = useState(false);
+
   const [jd, setJd] = useState('');
   const [job, setJob] = useState(null);
   const [cands, setCands] = useState([]);
@@ -12,13 +18,58 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
+  useEffect(() => {
+    const savedToken = localStorage.getItem('token');
+    const savedUser = localStorage.getItem('user');
+    if (savedToken && savedUser) {
+      setToken(savedToken);
+      setUser(JSON.parse(savedUser));
+    }
+
+    const savedJob = localStorage.getItem('hiringJob');
+    if (savedJob) {
+      try {
+        setJob(JSON.parse(savedJob));
+      } catch {
+        localStorage.removeItem('hiringJob');
+      }
+    }
+  }, []);
+
+  function handleLogin(t, u) {
+    localStorage.setItem('token', t);
+    localStorage.setItem('user', JSON.stringify(u));
+    setToken(t);
+    setUser(u);
+  }
+
+  function handleLogout() {
+    if (token) {
+      fetch(API + '/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      }).catch(console.error);
+    }
+    
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setToken(null);
+    setUser(null);
+    startNewJob();
+  }
+
+  const getAuthHeaders = () => ({
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  });
+
   async function createJob() {
     setLoading(true);
     setMessage('Analyzing JD with Astra...');
     try {
       const r = await fetch(API + '/api/jobs', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ description: jd })
       });
       const d = await r.json();
@@ -29,13 +80,16 @@ export default function Home() {
       setTimeout(() => setMessage(''), 3000);
     } catch (e) {
       setMessage(e.message);
+      if (e.message.includes('401') || e.message.includes('Invalid')) handleLogout();
     } finally {
       setLoading(false);
     }
   }
 
   async function loadCandidates() {
-    const r = await fetch(API + `/api/jobs/${job.id}/candidates`);
+    const r = await fetch(API + `/api/jobs/${job.id}/candidates`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
     const d = await r.json();
     setCands(r.ok ? d : []);
     if (!r.ok) setMessage(d.detail || 'Could not load candidates.');
@@ -46,7 +100,7 @@ export default function Home() {
     try {
       const r = await fetch(API + `/api/jobs/${job.id}/screenings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ candidate_ids: selected })
       });
       const d = await r.json();
@@ -73,32 +127,23 @@ export default function Home() {
   }
 
   async function refresh() {
-    if (!job) return;
-    const r = await fetch(API + `/api/jobs/${job.id}/screenings`);
+    if (!job || !token) return;
+    const r = await fetch(API + `/api/jobs/${job.id}/screenings`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
     const d = await r.json();
     if (r.ok) setScreenings(d);
     else setMessage(d.detail || 'Could not load screening status.');
   }
 
   useEffect(() => {
-    const saved = localStorage.getItem('hiringJob');
-    if (saved) {
-      try {
-        setJob(JSON.parse(saved));
-      } catch {
-        localStorage.removeItem('hiringJob');
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (job) {
+    if (job && token) {
       loadCandidates();
       refresh();
       const t = setInterval(refresh, 10000);
       return () => clearInterval(t);
     }
-  }, [job]);
+  }, [job, token]);
 
   function formatLabel(key) {
     return key.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -118,12 +163,25 @@ export default function Home() {
     return 'badge-warning';
   };
 
+  if (!token) {
+    return <Auth onLogin={handleLogin} />;
+  }
+
   return (
     <main className="container animate-fade-in">
-      <header className="mb-6">
-        <h1 className="header-title">AI Hiring Assistant</h1>
-        <p className="header-subtitle">GPT-6 Astra + Hunar AI Recruitment Screening</p>
+      <header className="mb-6" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)' }}>
+        <div>
+          <h1 className="header-title" style={{ fontSize: '1.8rem', margin: 0 }}>AI Hiring Assistant</h1>
+          <p className="header-subtitle" style={{ margin: 0, marginTop: '0.25rem', fontSize: '0.9rem' }}>GPT-6 Astra + Hunar AI Recruitment Screening</p>
+        </div>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{user?.email}</span>
+          <button onClick={() => setShowSessions(true)} className="btn-secondary" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}>My Sessions</button>
+          <button onClick={handleLogout} style={{ padding: '0.5rem 1rem', fontSize: '0.85rem', background: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>Logout</button>
+        </div>
       </header>
+
+      {showSessions && <SessionsModal token={token} onClose={() => setShowSessions(false)} />}
 
       {message && (
         <div className="glass-card mb-6" style={{ borderColor: 'var(--primary)', padding: '1rem', textAlign: 'center' }}>
